@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
 import uuid
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 import aiosqlite
 
@@ -145,7 +149,12 @@ class Database:
         row = await cursor.fetchone()
         return dict(row) if row else None
 
-    async def add_whitelist_pattern(self, tool_name: str, pattern: str, created_by: str) -> int:
+    async def add_whitelist_pattern(self, tool_name: str, pattern: str, created_by: str) -> int | None:
+        try:
+            re.compile(pattern)
+        except re.error:
+            logger.warning("Rejected invalid whitelist regex: %s", pattern[:200])
+            return None
         now = datetime.now(timezone.utc).isoformat()
         cursor = await self._db.execute(
             "INSERT INTO whitelist (tool_name, pattern, created_by, created_at) VALUES (?, ?, ?, ?)",
@@ -162,7 +171,12 @@ class Database:
         await self._db.execute("DELETE FROM whitelist WHERE id = ?", (pattern_id,))
         await self._db.commit()
 
-    async def add_denylist_pattern(self, tool_name: str, pattern: str, created_by: str) -> int:
+    async def add_denylist_pattern(self, tool_name: str, pattern: str, created_by: str) -> int | None:
+        try:
+            re.compile(pattern)
+        except re.error:
+            logger.warning("Rejected invalid denylist regex: %s", pattern[:200])
+            return None
         now = datetime.now(timezone.utc).isoformat()
         cursor = await self._db.execute(
             "INSERT INTO denylist (tool_name, pattern, created_by, created_at) VALUES (?, ?, ?, ?)",
@@ -170,6 +184,23 @@ class Database:
         )
         await self._db.commit()
         return cursor.lastrowid
+
+    async def cleanup_invalid_patterns(self) -> int:
+        """Remove whitelist/denylist entries with invalid regex. Returns count removed."""
+        removed = 0
+        for table in ("whitelist", "denylist"):
+            cursor = await self._db.execute(f"SELECT id, pattern FROM {table}")
+            rows = await cursor.fetchall()
+            for row in rows:
+                try:
+                    re.compile(row["pattern"])
+                except re.error:
+                    await self._db.execute(f"DELETE FROM {table} WHERE id = ?", (row["id"],))
+                    removed += 1
+        if removed:
+            await self._db.commit()
+            logger.info("Cleaned up %d invalid regex patterns from DB", removed)
+        return removed
 
     async def get_denylist_patterns(self) -> list[dict]:
         cursor = await self._db.execute("SELECT * FROM denylist")

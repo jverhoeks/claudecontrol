@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -18,13 +19,14 @@ def generate_similar_pattern(tool_name: str, tool_input: dict) -> str | None:
         command = tool_input.get("command", "")
         parts = command.split()
         if len(parts) <= 1:
-            return f"^{command}$"
-        return "^" + " ".join(parts[:-1]) + " .*$"
+            return f"^{re.escape(command)}$"
+        prefix = " ".join(parts[:-1])
+        return "^" + re.escape(prefix) + " .*$"
     if tool_name in ("Edit", "Write"):
         file_path = tool_input.get("file_path", "")
         last_slash = file_path.rfind("/")
         if last_slash >= 0:
-            return "^" + file_path[: last_slash + 1] + ".*$"
+            return "^" + re.escape(file_path[: last_slash + 1]) + ".*$"
         return None
     return None
 

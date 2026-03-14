@@ -29,6 +29,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         db = Database(settings.db_path)
         await db.init()
+        await db.cleanup_invalid_patterns()
         app.state.db = db
 
         classifier = RiskClassifier(settings.rules_path, db)
