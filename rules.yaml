@@ -1,0 +1,19 @@
+auto_approve:
+  tools:
+    - Read
+    - Glob
+    - Grep
+  bash_patterns:
+    - "^ls\\b"
+    - "^cat\\b"
+    - "^git (status|log|diff|branch)\\b"
+    - "^pwd$"
+    - "^echo\\b"
+    - "^(npm test|pytest|make test)\\b"
+
+auto_deny:
+  bash_patterns:
+    - "rm -rf /"
+    - "git push.*--force.*(main|master)"
+    - ":\\(\\)\\{\\s*:\\|:&\\s*\\};:"
+    - "> /dev/sd"

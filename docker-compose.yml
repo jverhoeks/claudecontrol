@@ -1,0 +1,15 @@
+services:
+  governance:
+    build: .
+    ports:
+      - "${SERVER_PORT:-8932}:8932"
+    volumes:
+      - ./data:/app/data
+      - ./rules.yaml:/app/rules.yaml:ro
+    env_file: .env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8932/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
