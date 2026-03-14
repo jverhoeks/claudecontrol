@@ -34,6 +34,7 @@ class Database:
                 decision TEXT NOT NULL DEFAULT 'pending',
                 decided_by TEXT,
                 telegram_message_id INTEGER,
+                transcript_path TEXT,
                 created_at TEXT NOT NULL,
                 decided_at TEXT
             );
@@ -60,12 +61,19 @@ class Database:
             );
         """)
 
-    async def create_request(self, session_id: str, tool_name: str, tool_input: dict, risk_tier: str) -> str:
+    async def create_request(
+        self,
+        session_id: str,
+        tool_name: str,
+        tool_input: dict,
+        risk_tier: str,
+        transcript_path: str | None = None,
+    ) -> str:
         req_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
         await self._db.execute(
-            "INSERT INTO requests (id, session_id, tool_name, tool_input, risk_tier, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (req_id, session_id, tool_name, json.dumps(tool_input), risk_tier, now),
+            "INSERT INTO requests (id, session_id, tool_name, tool_input, risk_tier, transcript_path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (req_id, session_id, tool_name, json.dumps(tool_input), risk_tier, transcript_path, now),
         )
         await self._db.commit()
         return req_id

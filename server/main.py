@@ -90,6 +90,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             tool_name=hook_req.tool_name,
             tool_input=hook_req.tool_input,
             risk_tier=tier.value,
+            transcript_path=hook_req.transcript_path,
         )
 
         if tier == RiskTier.AUTO_APPROVE:
@@ -117,6 +118,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             tool_name=hook_req.tool_name,
             tool_input=hook_req.tool_input,
             risk_tier="ask_human",
+            transcript_path=hook_req.transcript_path,
         )
 
         # Send Telegram notification

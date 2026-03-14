@@ -244,8 +244,7 @@ class TelegramBot:
             await query.edit_message_text(f"\u2705 Queued approval \u2014 whitelisted: {pattern}")
 
         elif action == "context":
-            transcript_path = None
-            await self.send_context(transcript_path)
+            await self.send_context(req.get("transcript_path"))
 
         elif action == "dismiss":
             await self._db.update_decision(request_id, "dismissed", "telegram")
