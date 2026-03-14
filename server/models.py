@@ -58,6 +58,7 @@ class _PermissionDecision(BaseModel):
 
 
 class _PermissionRequestOutput(BaseModel):
+    hookEventName: str = "PermissionRequest"
     decision: _PermissionDecision
 
 
