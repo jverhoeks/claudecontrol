@@ -4,12 +4,12 @@ import json
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request
 
 from server.config import Settings
 from server.database import Database
 from server.decision_engine import DecisionEngine
-from server.models import HookRequest, StopHookRequest, PreToolUseResponse, PermissionRequestResponse, RiskTier
+from server.models import HookRequest, StopHookRequest, PreToolUseResponse, RiskTier
 from server.risk_classifier import RiskClassifier
 from server.session_registry import SessionRegistry
 from server.telegram_bot import TelegramBot
@@ -104,64 +104,53 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             resp = PreToolUseResponse.deny(reason)
             return resp.model_dump(exclude_none=True)
         else:
-            # Ask human — return no opinion, let PermissionRequest handle it
-            return {}
+            # Ask human — send Telegram notification and wait here in PreToolUse
+            # (PermissionRequest has a race condition with the CLI dialog)
+            friendly_name = await app.state.registry.get_friendly_name(
+                hook_req.session_id, hook_req.cwd
+            )
+
+            try:
+                msg_id = await app.state.bot.send_approval_request(
+                    request_id=req_id,
+                    friendly_name=friendly_name,
+                    tool_name=hook_req.tool_name,
+                    tool_input=hook_req.tool_input,
+                )
+                await app.state.db.set_telegram_message_id(req_id, msg_id)
+            except Exception:
+                logger.exception("Failed to send Telegram notification")
+                return {}  # No opinion — fall back to CLI
+
+            # Hold connection open until Telegram responds or timeout
+            decision, decided_by = await app.state.engine.wait_for_decision(req_id)
+
+            if decision is None:
+                # Timeout — update Telegram message, fall back to CLI
+                await app.state.db.update_decision(req_id, "timeout", "system")
+                try:
+                    msg_id_val = (await app.state.db.get_request(req_id) or {}).get("telegram_message_id")
+                    if msg_id_val:
+                        await app.state.bot.update_message_timeout(
+                            msg_id_val, hook_req.tool_input, hook_req.tool_name, friendly_name, req_id
+                        )
+                except Exception:
+                    logger.exception("Failed to update Telegram timeout message")
+                return {}  # No opinion — CLI shows permission prompt
+
+            # Got decision from Telegram
+            await app.state.db.update_decision(req_id, decision, decided_by)
+            if decision == "allow":
+                resp = PreToolUseResponse.allow()
+            else:
+                resp = PreToolUseResponse.deny("Denied by user via Telegram")
+            return resp.model_dump(exclude_none=True)
 
     @app.post("/hook/permission-request")
     async def permission_request(request: Request):
-        body = await request.json()
-        hook_req = HookRequest(**body)
-
-        friendly_name = await app.state.registry.get_friendly_name(
-            hook_req.session_id, hook_req.cwd
-        )
-
-        # Create request record
-        req_id = await app.state.db.create_request(
-            session_id=hook_req.session_id,
-            tool_name=hook_req.tool_name,
-            tool_input=hook_req.tool_input,
-            risk_tier="ask_human",
-            transcript_path=hook_req.transcript_path,
-        )
-
-        # Send Telegram notification
-        try:
-            msg_id = await app.state.bot.send_approval_request(
-                request_id=req_id,
-                friendly_name=friendly_name,
-                tool_name=hook_req.tool_name,
-                tool_input=hook_req.tool_input,
-            )
-            await app.state.db.set_telegram_message_id(req_id, msg_id)
-        except Exception:
-            logger.exception("Failed to send Telegram notification")
-
-        # Wait for decision
-        decision, decided_by = await app.state.engine.wait_for_decision(req_id)
-
-        if decision is None:
-            # Timeout — update Telegram message and return 408
-            await app.state.db.update_decision(req_id, "timeout", "system")
-            try:
-                msg_id_val = (await app.state.db.get_request(req_id) or {}).get("telegram_message_id")
-                if msg_id_val:
-                    await app.state.bot.update_message_timeout(
-                        msg_id_val, hook_req.tool_input, hook_req.tool_name, friendly_name, req_id
-                    )
-            except Exception:
-                logger.exception("Failed to update Telegram timeout message")
-            return Response(status_code=408)
-
-        # Got a decision from Telegram
-        await app.state.db.update_decision(req_id, decision, decided_by)
-
-        if decision == "allow":
-            resp = PermissionRequestResponse.allow()
-        else:
-            resp = PermissionRequestResponse.deny("Denied by user via Telegram")
-
-        return resp.model_dump(exclude_none=True)
+        # Telegram approval is handled in PreToolUse. If we get here,
+        # PreToolUse timed out — let the CLI handle it.
+        return {}
 
     def _extract_last_assistant_text(transcript_path: str | None) -> str | None:
         if not transcript_path:

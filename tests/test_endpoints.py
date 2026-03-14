@@ -105,7 +105,8 @@ def test_pre_tool_use_auto_deny(client):
     assert body["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
-def test_pre_tool_use_ask_human_returns_empty(client):
+def test_pre_tool_use_ask_human_sends_telegram_and_times_out(client):
+    """ask_human items send Telegram notification, then fall back to no opinion on timeout."""
     resp = client.post("/hook/pre-tool-use", json={
         "session_id": "s1",
         "cwd": "/tmp/project",
@@ -115,10 +116,13 @@ def test_pre_tool_use_ask_human_returns_empty(client):
     })
     assert resp.status_code == 200
     body = resp.json()
-    assert body == {}
+    assert body == {}  # No opinion after timeout — falls back to CLI
+    # Verify Telegram was notified
+    client.app.state.bot.send_approval_request.assert_called_once()
 
 
-def test_permission_request_timeout_returns_408(client):
+def test_permission_request_passthrough(client):
+    """PermissionRequest is now a passthrough — returns empty (CLI handles it)."""
     resp = client.post("/hook/permission-request", json={
         "session_id": "s1",
         "cwd": "/tmp/project",
@@ -126,7 +130,8 @@ def test_permission_request_timeout_returns_408(client):
         "tool_name": "Bash",
         "tool_input": {"command": "docker run nginx"},
     })
-    assert resp.status_code == 408
+    assert resp.status_code == 200
+    assert resp.json() == {}
 
 
 def test_queue_endpoint(client):
