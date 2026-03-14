@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from contextlib import asynccontextmanager
 
@@ -8,7 +9,7 @@ from fastapi import FastAPI, Request, Response
 from server.config import Settings
 from server.database import Database
 from server.decision_engine import DecisionEngine
-from server.models import HookRequest, PreToolUseResponse, PermissionRequestResponse, RiskTier
+from server.models import HookRequest, StopHookRequest, PreToolUseResponse, PermissionRequestResponse, RiskTier
 from server.risk_classifier import RiskClassifier
 from server.session_registry import SessionRegistry
 from server.telegram_bot import TelegramBot
@@ -160,6 +161,61 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             resp = PermissionRequestResponse.deny("Denied by user via Telegram")
 
         return resp.model_dump(exclude_none=True)
+
+    def _extract_last_assistant_text(transcript_path: str | None) -> str | None:
+        if not transcript_path:
+            return None
+        try:
+            with open(transcript_path) as f:
+                lines = f.readlines()
+            for line in reversed(lines[-50:]):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if entry.get("role") != "assistant":
+                    continue
+                content = entry.get("message", {}).get("content", entry.get("content", ""))
+                if isinstance(content, str):
+                    return content
+                if isinstance(content, list):
+                    texts = [
+                        b.get("text", "")
+                        for b in content
+                        if isinstance(b, dict) and b.get("type") == "text"
+                    ]
+                    return "\n".join(texts) if texts else None
+            return None
+        except Exception:
+            logger.debug("Could not read transcript at %s", transcript_path)
+            return None
+
+    @app.post("/hook/stop")
+    async def stop_hook(request: Request):
+        body = await request.json()
+        hook_req = StopHookRequest(**body)
+
+        if hook_req.stop_reason != "end_turn":
+            return {}
+
+        friendly_name = await app.state.registry.get_friendly_name(
+            hook_req.session_id, hook_req.cwd
+        )
+
+        last_message = _extract_last_assistant_text(hook_req.transcript_path)
+        if last_message and "?" in last_message:
+            try:
+                await app.state.bot.send_question_notification(
+                    friendly_name=friendly_name,
+                    question=last_message,
+                )
+            except Exception:
+                logger.exception("Failed to send question notification")
+
+        return {}
 
     @app.get("/queue")
     async def queue():

@@ -22,6 +22,14 @@ class HookRequest(BaseModel):
     transcript_path: str | None = None
 
 
+class StopHookRequest(BaseModel):
+    session_id: str
+    cwd: str
+    hook_event_name: str = "Stop"
+    stop_reason: str | None = None
+    transcript_path: str | None = None
+
+
 class _PreToolUseOutput(BaseModel):
     hookEventName: str = "PreToolUse"
     permissionDecision: str
