@@ -51,9 +51,10 @@ Classification is pattern-based (regex), configured in `rules.yaml`.
 
 ### Ask-human (routed to Telegram + CLI)
 - Everything not matched by the above two tiers
-- Timeout: 120s, then deny and queue for retry
 
-Dynamic whitelist/denylist patterns added via Telegram take priority over `rules.yaml`.
+**Precedence order:** denylist > whitelist > `rules.yaml` auto-deny > `rules.yaml` auto-approve > ask-human (default). If a pattern appears in both whitelist and denylist, denylist wins (safety-first).
+
+Dynamic whitelist/denylist patterns added via Telegram are checked first, before `rules.yaml` rules.
 
 ## Dual CLI + Telegram Approval Path
 
@@ -64,14 +65,15 @@ Uses two Claude Code hooks working together:
 
 ### Flow for ask-human actions:
 
-1. `PreToolUse` fires → server classifies as ask-human → returns no decision (passes through)
-2. `PermissionRequest` fires → server sends Telegram notification, holds HTTP response open
+1. `PreToolUse` fires → server classifies as ask-human → responds with HTTP 200 and empty `hookSpecificOutput` (no `permissionDecision` field). This means "no opinion" — Claude Code proceeds to its normal permission check.
+2. `PermissionRequest` fires → server sends Telegram notification, holds HTTP response open for up to `PERMISSION_REQUEST_TIMEOUT` seconds.
 3. Race between two paths:
-   - **Telegram approval** (within timeout) → server returns `allow`/`deny`, CLI prompt never appears
-   - **Timeout** (e.g. 5s configurable) → server doesn't respond, Claude Code falls back to normal CLI prompt
-4. User can configure preference:
-   - `PERMISSION_REQUEST_TIMEOUT=5` → prefers CLI (fast fallback)
-   - `PERMISSION_REQUEST_TIMEOUT=120` → prefers Telegram (waits longer)
+   - **Telegram approval** (within timeout) → server returns `{"hookSpecificOutput": {"decision": {"behavior": "allow"}}}` or `deny`, CLI prompt never appears
+   - **Server-side timeout** → server returns HTTP 408 (no body). Claude Code treats hook timeout as "no opinion" and falls back to showing the normal CLI prompt.
+4. **Late Telegram callback:** If the user taps Approve/Deny on Telegram after the server-side timeout has already released the HTTP response, the decision is stored but cannot affect the current request (it already went to CLI). Instead, the pattern is added to the whitelist/denylist for future requests. The Telegram message is updated to show "Handled in CLI — pattern saved for next time."
+5. User can configure preference:
+   - `PERMISSION_REQUEST_TIMEOUT=5` → prefers CLI (fast fallback to terminal prompt)
+   - `PERMISSION_REQUEST_TIMEOUT=120` → prefers Telegram (waits longer before falling back)
 
 ## Telegram UX
 
@@ -83,7 +85,7 @@ Uses two Claude Code hooks working together:
 📂 my-project (#3)
 🔧 Bash
 💻 git push origin feature/auth
-⚠️ Risk: MEDIUM
+⚠️ Tier: NEEDS APPROVAL
 
 [✅ Approve]  [❌ Deny]
 [🔄 Auto-approve similar]  [📋 Show context]
@@ -95,7 +97,7 @@ Uses two Claude Code hooks working together:
 |--------|--------|
 | Approve | Releases HTTP response with `allow` |
 | Deny | Releases with `deny`, reason sent to Claude |
-| Auto-approve similar | Adds pattern to whitelist, then approves |
+| Auto-approve similar | Generates a pattern from the command and adds to whitelist, then approves. Pattern generation: for Bash commands, replaces the last path/argument segment with `.*` (e.g. `git push origin feature/auth` → `^git push origin .*$`). For Edit/Write, replaces filename with `.*` keeping directory (e.g. `/src/foo/bar.py` → `/src/foo/.*`). User sees the generated pattern in a confirmation message and can edit it via a follow-up Telegram message before it's saved. |
 | Show context | Sends follow-up with last ~10 transcript lines |
 
 ### After decision:
@@ -117,11 +119,91 @@ Uses two Claude Code hooks working together:
 
 Claude receives: "Approval timed out. The request has been queued — you can ask the user to retry, or try a different approach."
 
-If "Approve queued" is tapped, the pattern is whitelisted so the next retry auto-approves.
+If "Approve queued" is tapped, the exact command is whitelisted so the next retry auto-approves. Claude will need to re-invoke the same tool call — there is no push mechanism to resume a timed-out request.
 
 ### Multi-session clarity:
 
 Each session gets a friendly name: `{project-dir} #{counter}` (e.g. `my-project #1`, `api-server #2`). Tracked in session registry.
+
+## Hook Input/Output Contracts
+
+### PreToolUse — Request body (from Claude Code)
+
+```json
+{
+  "session_id": "abc123",
+  "cwd": "/Users/jj/src/my-project",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "git push origin main"
+  },
+  "permission_mode": "default",
+  "transcript_path": "/path/to/transcript.jsonl"
+}
+```
+
+For Edit/Write, `tool_input` contains `{"file_path": "...", "file_contents": "..."}`. For other tools, the input matches their parameter schema.
+
+### PreToolUse — Response body (from server)
+
+**Auto-approve:**
+```json
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "allow"
+  }
+}
+```
+
+**Auto-deny:**
+```json
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "deny",
+    "permissionDecisionReason": "Blocked by rule: rm -rf on root path"
+  }
+}
+```
+
+**Ask-human (pass through to PermissionRequest):**
+```json
+{}
+```
+HTTP 200 with empty JSON body. No `hookSpecificOutput` means "no opinion" — Claude Code proceeds to its normal permission flow.
+
+### PermissionRequest — Request body (from Claude Code)
+
+Same fields as PreToolUse (session_id, tool_name, tool_input, etc.).
+
+### PermissionRequest — Response body (from server)
+
+**Approved via Telegram:**
+```json
+{
+  "hookSpecificOutput": {
+    "decision": {
+      "behavior": "allow"
+    }
+  }
+}
+```
+
+**Denied via Telegram:**
+```json
+{
+  "hookSpecificOutput": {
+    "decision": {
+      "behavior": "deny",
+      "reason": "Denied by user via Telegram"
+    }
+  }
+}
+```
+
+**Timeout (no Telegram response):** Server returns HTTP 408 or lets the connection time out. Claude Code falls back to CLI prompt.
 
 ## Server Components
 
@@ -188,6 +270,59 @@ Same schema as whitelist.
 
 Whitelist/denylist checked before `rules.yaml` — Telegram-added patterns take priority.
 
+## `rules.yaml` Schema
+
+```yaml
+# Risk classification rules for Claude Control
+# Changes are live-reloaded (server watches file with inotify/polling)
+
+auto_approve:
+  # Tools that are always allowed without human approval
+  tools:
+    - Read
+    - Glob
+    - Grep
+  # Bash commands matching these regexes are auto-approved
+  bash_patterns:
+    - "^ls\\b"
+    - "^cat\\b"
+    - "^git (status|log|diff|branch)\\b"
+    - "^pwd$"
+    - "^echo\\b"
+    - "^(npm test|pytest|make test)\\b"
+
+auto_deny:
+  # Bash commands matching these regexes are always blocked
+  bash_patterns:
+    - "rm -rf /"
+    - "git push.*--force.*(main|master)"
+    - ":\\(\\)\\{\\s*:\\|:&\\s*\\};:"  # fork bomb
+    - "> /dev/sd"
+
+# Everything not matched above falls to ask-human tier.
+# Invalid YAML on reload: server logs error, keeps previous valid rules.
+```
+
+All patterns are Python regexes matched against the `command` field for Bash, or `file_path` for Edit/Write. Tool-level rules (like `tools: [Read]`) match on `tool_name` exactly.
+
+## Security
+
+### Local endpoint authentication
+The server binds to `127.0.0.1:8932` (localhost only, not `0.0.0.0`). No authentication token is required since only local processes can reach it. If cloud deployment is added later, bearer token auth will be required.
+
+### Telegram bot security
+All incoming Telegram updates are filtered by `TELEGRAM_CHAT_ID`. Callbacks from any other chat are silently dropped. The bot token should be treated as a secret and not committed to git.
+
+## Error Handling
+
+| Scenario | Behavior |
+|----------|----------|
+| Server is down / unreachable | Claude Code hook times out → falls back to normal CLI prompt (hooks are non-blocking on network errors) |
+| Telegram API unreachable | Server logs warning, ask-human requests degrade to timeout → CLI fallback |
+| SQLite locked (concurrent writes) | Use WAL mode for concurrent reads + writes. SQLite handles this natively for the expected load (5-10 sessions). |
+| Invalid `rules.yaml` on reload | Server logs parse error, retains last valid ruleset, sends Telegram warning message |
+| Hook returns non-2xx | Claude Code treats as "no opinion" — normal permission flow continues |
+
 ## Project Structure
 
 ```
@@ -216,7 +351,9 @@ claude-control/
 TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
 TELEGRAM_CHAT_ID=987654321
 SERVER_PORT=8932
-PERMISSION_REQUEST_TIMEOUT=5
+PERMISSION_REQUEST_TIMEOUT=5    # Seconds server waits for Telegram before releasing to CLI
+                                 # Claude Code hook timeout (180s) is the hard ceiling
+                                 # Set to 5 for CLI-preferred, 120 for Telegram-preferred
 LOG_LEVEL=INFO
 ```
 
