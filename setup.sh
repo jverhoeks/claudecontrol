@@ -178,7 +178,7 @@ hooks['PreToolUse'] = [
         'hooks': [{
             'type': 'http',
             'url': 'http://localhost:${SERVER_PORT}/hook/pre-tool-use',
-            'timeout': 10
+            'timeout': 180
         }]
     }
 ]
@@ -218,7 +218,7 @@ else
         "hooks": [{
           "type": "http",
           "url": "http://localhost:${SERVER_PORT}/hook/pre-tool-use",
-          "timeout": 10
+          "timeout": 180
         }]
       }
     ],
