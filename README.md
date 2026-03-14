@@ -83,14 +83,7 @@ Not near your phone? No problem:
 - 🐳 Docker
 - 📱 Telegram account
 
-### 1. Create a Telegram Bot
-
-1. Open Telegram and message **@BotFather**
-2. Send `/newbot` and follow the prompts
-3. Copy the **bot token**
-4. Message your new bot, then visit `https://api.telegram.org/bot<TOKEN>/getUpdates` to find your **chat ID**
-
-### 2. Run Setup
+### 3 commands, that's it:
 
 ```bash
 git clone git@github.com:jverhoeks/claudecontrol.git
@@ -98,15 +91,17 @@ cd claudecontrol
 ./setup.sh
 ```
 
-The setup script will:
-- 🔑 Ask for your Telegram bot token and chat ID
-- 🐳 Build and start the Docker container
-- ⚙️ Install HTTP hooks into `~/.claude/settings.json`
-- ✅ Verify the server is healthy
+The interactive setup wizard will:
 
-### 3. Done!
+1. 🤖 Walk you through creating a Telegram bot (via @BotFather)
+2. 🔑 Ask you to paste the bot token
+3. 📱 Ask you to message the bot, then **auto-detects your Chat ID**
+4. 📨 Send a test message to confirm it works
+5. 🐳 Build and start the Docker container
+6. ⚙️ Install HTTP hooks into `~/.claude/settings.json`
+7. ✅ Verify everything is healthy
 
-Every Claude Code session on your machine now routes through governance. Open Telegram and start approving! 🎉
+**That's it.** Every Claude Code session on your machine now routes through governance. Open Telegram and start approving! 🎉
 
 ---
 
