@@ -129,12 +129,12 @@ auto_deny:
     - "git push.*--force.*(main|master)"
 ```
 
-### 🎚️ Approval Mode (`PERMISSION_REQUEST_TIMEOUT` in `.env`)
+### 🎚️ Approval Timeout (`PERMISSION_REQUEST_TIMEOUT` in `.env`)
 
 | Value | Behavior |
 |-------|----------|
-| `5` (default) | ⌨️ **CLI-preferred** — quick fallback to terminal prompt |
-| `120` | 📱 **Telegram-preferred** — waits longer for mobile approval |
+| `120` (default) | 📱 **Telegram-preferred** — waits 2 min for mobile approval, then falls back to CLI |
+| `10` | ⌨️ **CLI-preferred** — quick fallback to terminal prompt |
 
 ### 🔄 Dynamic Rules via Telegram
 
@@ -179,14 +179,15 @@ claudecontrol/
 
 ### 🔌 How Hooks Work
 
-Claude Control uses two Claude Code [HTTP hooks](https://docs.anthropic.com/en/docs/claude-code/hooks):
+Claude Control uses three Claude Code [HTTP hooks](https://docs.anthropic.com/en/docs/claude-code/hooks):
 
 | Hook | Purpose | Timeout |
 |------|---------|---------|
-| `PreToolUse` | Auto-approve/deny based on rules | 10s |
-| `PermissionRequest` | Route to Telegram for human decision | 180s |
+| `PreToolUse` | Auto-approve/deny + Telegram approval for ask-human items | 180s |
+| `PermissionRequest` | Passthrough (CLI fallback after PreToolUse timeout) | 180s |
+| `Stop` | Detect questions and notify via Telegram | 10s |
 
-**Dual approval path:** The `PermissionRequest` hook holds the response open while waiting for Telegram. If you respond on Telegram, the CLI prompt never appears. If the server times out, Claude Code falls back to the normal terminal prompt. Either way works!
+**Telegram-first approval:** The `PreToolUse` hook handles everything — auto-approve, auto-deny, and Telegram approval. For ask-human items, it holds the HTTP connection open while waiting for your Telegram response. Since PreToolUse fires *before* the CLI permission dialog, Telegram gets first shot. If you don't respond in time, the hook returns no opinion and the CLI prompt appears as fallback.
 
 ---
 
