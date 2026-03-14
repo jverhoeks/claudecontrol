@@ -85,7 +85,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
         # Log request
-        await app.state.db.create_request(
+        req_id = await app.state.db.create_request(
             session_id=hook_req.session_id,
             tool_name=hook_req.tool_name,
             tool_input=hook_req.tool_input,
@@ -94,9 +94,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
         if tier == RiskTier.AUTO_APPROVE:
+            await app.state.db.update_decision(req_id, "allow", "system")
             resp = PreToolUseResponse.allow()
             return resp.model_dump(exclude_none=True)
         elif tier == RiskTier.AUTO_DENY:
+            await app.state.db.update_decision(req_id, "deny", "system")
             resp = PreToolUseResponse.deny(reason)
             return resp.model_dump(exclude_none=True)
         else:
