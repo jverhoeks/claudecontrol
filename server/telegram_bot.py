@@ -191,6 +191,16 @@ class TelegramBot:
                 chat_id=self._chat_id, text="Failed to read transcript."
             )
 
+    async def send_question_notification(self, friendly_name: str, question: str) -> None:
+        snippet = question[-500:] if len(question) > 500 else question
+        text = (
+            f"\U0001f914 Waiting for input\n"
+            f"\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
+            f"\U0001f4c2 {friendly_name}\n\n"
+            f"{snippet}"
+        )
+        await self._app.bot.send_message(chat_id=self._chat_id, text=text)
+
     async def _handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
         if query.message.chat_id != self._chat_id:

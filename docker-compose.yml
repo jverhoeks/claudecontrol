@@ -6,6 +6,7 @@ services:
     volumes:
       - ./data:/app/data
       - ./rules.yaml:/app/rules.yaml:ro
+      - ${HOME}/.claude:${HOME}/.claude:ro
     env_file: .env
     restart: unless-stopped
     healthcheck:

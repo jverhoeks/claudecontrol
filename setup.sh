@@ -194,6 +194,17 @@ hooks['PermissionRequest'] = [
     }
 ]
 
+hooks['Stop'] = [
+    {
+        'matcher': '.*',
+        'hooks': [{
+            'type': 'http',
+            'url': 'http://localhost:${SERVER_PORT}/hook/stop',
+            'timeout': 10
+        }]
+    }
+]
+
 with open('$SETTINGS_FILE', 'w') as f:
     json.dump(settings, f, indent=2)
 "
@@ -218,6 +229,16 @@ else
           "type": "http",
           "url": "http://localhost:${SERVER_PORT}/hook/permission-request",
           "timeout": 180
+        }]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": ".*",
+        "hooks": [{
+          "type": "http",
+          "url": "http://localhost:${SERVER_PORT}/hook/stop",
+          "timeout": 10
         }]
       }
     ]
